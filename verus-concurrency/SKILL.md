@@ -1,6 +1,7 @@
-______________________________________________________________________
-
-## name: verus-concurrency description: Design and repair concurrent Verus proofs. Use when working on tokenized_state_machine! protocols, ghost tokens, AtomicInvariant or LocalInvariant, atomic_with_ghost!, GhostVar or GhostVarAuth, deposit/withdraw/guard storage patterns, or Arc and thread::spawn verified sharing.
+---
+name: verus-concurrency
+description: Design and repair concurrent Verus proofs. Use when working on tokenized_state_machine! protocols, ghost tokens, AtomicInvariant or LocalInvariant, atomic_with_ghost!, GhostVar or GhostVarAuth, deposit/withdraw/guard storage patterns, or Arc and thread::spawn verified sharing.
+---
 
 # Verus Concurrency
 

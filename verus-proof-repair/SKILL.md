@@ -1,6 +1,7 @@
-______________________________________________________________________
-
-## name: verus-proof-repair description: Repair failing Verus proofs with minimal edits. Use when verification is already written but one or more obligations fail, such as assertions, loop invariants, preconditions, postconditions, trigger instantiation, fuel, or arithmetic proof failures.
+---
+name: verus-proof-repair
+description: Repair failing Verus proofs with minimal edits. Use when verification is already written but one or more obligations fail, such as assertions, loop invariants, preconditions, postconditions, trigger instantiation, fuel, or arithmetic proof failures.
+---
 
 # Verus Proof Repair
 

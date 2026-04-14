@@ -1,6 +1,7 @@
-______________________________________________________________________
-
-## name: verus-proof-writing description: Write new Verus proofs from scratch. Use when the task is to design specs, invariants, helper lemmas, quantifiers, triggers, or ghost state for new verified code rather than repairing one localized failing proof.
+---
+name: verus-proof-writing
+description: Write new Verus proofs from scratch. Use when the task is to design specs, invariants, helper lemmas, quantifiers, triggers, or ghost state for new verified code rather than repairing one localized failing proof.
+---
 
 # Verus Proof Writing
 

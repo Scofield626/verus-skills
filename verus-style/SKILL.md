@@ -1,6 +1,7 @@
-______________________________________________________________________
-
-## name: verus-style description: Apply maintainable Verus code style. Use when reviewing or editing Verus code for module layout, naming, spec/proof/exec separation, trigger discipline, broadcast facts, ghost ownership style, or common vstd import patterns.
+---
+name: verus-style
+description: Apply maintainable Verus code style. Use when reviewing or editing Verus code for module layout, naming, spec/proof/exec separation, trigger discipline, broadcast facts, ghost ownership style, or common vstd import patterns.
+---
 
 # Verus Style
 
