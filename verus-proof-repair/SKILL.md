@@ -1,175 +1,87 @@
 ---
 name: verus-proof-repair
-description: Repair failing Verus proofs with minimal edits. Use when verification is already written but one or more obligations fail, such as assertions, loop invariants, preconditions, postconditions, trigger instantiation, fuel, or arithmetic proof failures.
+description: Repair failing or unstable Verus proofs while preserving executable behavior and intended specifications. Use for failed assertions, contracts, invariants, decreases checks, quantifier instantiation, solver timeouts, or proof regressions after a version change.
 ---
 
 # Verus Proof Repair
 
-Use this skill when the proof mostly exists and the task is to make it verify with the smallest defensible change.
+Find the missing obligation before changing the proof. Preserve executable behavior and the intended contract.
 
-## Repair priorities
+## Establish the failure
 
-1. Preserve exec behavior.
-1. Prefer local proof edits over refactors.
-1. Change proof artifacts before changing specs.
-1. Add reusable helper lemmas only when local assertions are not enough.
-1. Treat `assume` as temporary proof debt, not a finished solution.
+1. Read the repository's verification command and toolchain pin.
+1. Reproduce the failure with the same features and dependencies.
+1. Distinguish parsing, type or ownership errors, failed proof obligations, and resource limits.
+1. Read the failing clause, then test whether it is actually true under the available assumptions.
 
-## First classify the failure
+Do not assume every quantified failure is a trigger problem.
+A false statement, missing domain condition, or non-inductive invariant needs a different repair.
+After a version change, check migration notes before rewriting valid proof logic.
 
-### Precondition failure
+For focused commands, profiling, solver selection, and counterexample reasoning, read
+[diagnostics and stability](references/diagnostics.md).
 
-Make the call-site fact explicit just before the call.
+## Select the smallest defensible repair
 
-Typical repairs:
+| Failure | First useful checks |
+| --- | --- |
+| Call precondition | Exact missing fact, domain bound, required token, existing lemma |
+| Postcondition | Result's abstract meaning, final loop state, early return and error paths |
+| Invariant entry | Initialization and facts carried from preceding code |
+| Invariant preservation | Arbitrary loop-head state, modified entries, unchanged entries, missing relation |
+| Collection equality | Equal lengths or domains, then pointwise equality; nested views may need `=~~=` |
+| Quantifier use | Inferred trigger, available matching terms, variable coverage, matching loops |
+| Recursive proof | Induction hypothesis, decreases measure, local reveal depth |
+| Arithmetic | Integer versus machine arithmetic, overflow, casts, division domain, solver mode |
+| Timeout or unstable result | Excess context, broad broadcasts, unfolding, quantifier profile |
 
-- add a local `assert(...)`
-- pull the relevant loop invariant into scope
-- prove a witness before `choose`
-- call an existing helper lemma
+Add a local assertion when it exposes the exact missing fact.
+Call a lemma when the fact requires a semantic proof step.
+Do not wait until every assertion trick fails before extracting a helper that reduces proof complexity.
 
-### Postcondition failure
+## Common repairs
 
-Strengthen the final loop invariant or add a proof step just before return.
+### Keep the context small
 
-Typical repairs:
+Use `assert(goal) by { ... }` to hide intermediate facts from the following code.
+For excessive incoming context, isolate a helper. Specialized solver assertions can use explicit local `requires` clauses.
+An ordinary `by` block still receives the outer context.
 
-- restate the abstract meaning of the final state
-- add a local `assert` for the exact ensures clause
-- move a missing semantic fact into the loop invariant
+Reveal only the needed definition. Increase recursive fuel only for a known finite unfolding.
+Use induction for an unbounded claim.
 
-### Loop invariant entry or maintenance failure
+### Repair quantified post-state facts
 
-For entry:
+Use `assert forall ... by` to fix an arbitrary key or index.
+Split modified and unchanged cases, then apply the corresponding pre-state invariant.
+First prove that the strengthened invariant holds initially and survives every transition.
 
-- prove the invariant before the loop
-- propagate needed length or bound facts from earlier loops
+### Prove witnesses and domains
 
-For maintenance:
+Prove `exists|x| P(x)` before relying on `choose|x| P(x)` satisfying `P`.
+Prove membership before using a map lookup's intended value.
+`recommends` does not supply these facts.
 
-- assert the failing invariant at the end of the loop body
-- break one large invariant into smaller clauses
-- materialize the missing semantic step with a helper lemma
+### Diagnose invariant counterexamples
 
-### Assertion failure
+A failing preservation step may describe a loop-head state that is unreachable from entry but allowed by the current invariant.
+Find the missing relation that excludes this state, then prove that relation at entry and after one step.
+Separate this case from a reachable execution that violates the required behavior.
+Do not treat a timeout, compiler error, or arbitrary solver model as a validated counterexample.
 
-Insert the narrowest missing fact first.
+## Preserve the proof boundary
 
-Typical repairs:
+Do not finish by weakening a postcondition, strengthening a precondition to exclude intended inputs, or changing the algorithm without justification.
+Do not introduce `assume`, `admit`, `external_body`, assumed specifications, or disabled verification to get a green result.
+Remove temporary diagnostic assumptions before final verification.
 
-- assert the trigger term explicitly
-- split one opaque jump into multiple assertions
-- reveal one recursive spec at the needed depth
-- convert a large goal into `calc!` or a helper lemma
+If the specification is false, explain the counterexample and the required behavior change.
+If a proof is unstable, retain a semantic repair; a favorable random seed alone is not a repair.
 
-### Arithmetic or bitvector failure
+## Verify the result
 
-Dispatch to the right solver mode.
+Run the focused proof, then the repository's full verification, lint, and relevant tests.
+Record the toolchain and verified scope. Compare assumptions and public contracts with the starting version.
+Use additional seeds or profiles when instability is the issue, not as a mandatory step for every edit.
 
-Patterns:
-
-```rust
-assert(expr) by (compute_only);
-assert(bit_expr) by (bit_vector);
-assert(arith_expr) by (nonlinear_arith);
-```
-
-### Trigger or quantifier failure
-
-Assume the issue is trigger mismatch until proven otherwise.
-
-Repairs:
-
-- assert the exact instantiation term
-- rewrite the quantifier trigger
-- add a synthetic trigger helper
-- re-prove the post-state with `assert forall ... by { ... }`
-
-## High-value repair moves
-
-### 1. Narrow with a local assertion
-
-```rust
-assert(P(s[k]));
-assert(goal_about(s[k]));
-```
-
-This is often enough to make an existing quantified hypothesis fire.
-
-### 2. Reveal only what you need
-
-Use `reveal`, `hide`, and `reveal_with_fuel` on the exact function and scope needed.
-
-```rust
-proof {
-    reveal_with_fuel(triangle, 3);
-}
-```
-
-Do not globally unfold a recursive or opaque definition unless the whole file depends on it.
-
-### 3. Materialize witnesses explicitly
-
-```rust
-assert(exists|i: int| P(i));
-let i = choose|i: int| P(i);
-```
-
-If no witness is in scope, prove one concretely first.
-
-### 4. Split quantified repairs out of transition proofs
-
-When a state transition breaks a protocol invariant:
-
-```rust
-assert forall |k|
-    #[trigger] post.map.contains_key(k)
-    implies post.inv_for(k)
-by {
-    match post.map[k] {
-        ...
-    }
-}
-```
-
-This is the standard repair for non-inductive post-state invariants.
-
-### 5. Add a decreases witness helper
-
-If Verus cannot see why recursion decreases, isolate that proof.
-
-Prefer:
-
-- explicit `decreases`
-- a dedicated decreases helper
-- a separate monotonicity lemma
-
-## Diagnostic workflow
-
-1. Read the failing obligation, not just the error summary.
-1. Identify whether the missing fact is semantic, arithmetic, or trigger-related.
-1. Try the smallest local assertion first.
-1. If that fails, add or strengthen the loop invariant.
-1. If recursion is involved, inspect reveal/fuel and decreases next.
-1. If quantified post-state facts fail, switch to `assert forall ... by { ... }`.
-1. Only after those fail should you add a new helper lemma.
-
-## Edits that are usually too large
-
-- changing the algorithm when only the proof is broken
-- weakening a spec to avoid proving it
-- replacing a proof with broad `assume`
-- refactoring many unrelated proof blocks at once
-
-## Concurrency escalation
-
-If the failure is about:
-
-- `AtomicInvariant`
-- `LocalInvariant`
-- `atomic_with_ghost!`
-- `tokenized_state_machine!`
-- namespace masks
-- storage `deposit` / `withdraw` / `guard`
-
-switch to `verus-concurrency`, because those failures are protocol- and ownership-specific rather than ordinary sequential proof repairs.
+For token ownership, invariant masks, atomicity, or storage transitions, consult `verus-concurrency` if available.
