@@ -1,167 +1,75 @@
 ---
 name: verus-style
-description: Apply maintainable Verus code style. Use when reviewing or editing Verus code for module layout, naming, spec/proof/exec separation, trigger discipline, broadcast facts, ghost ownership style, or common vstd import patterns.
+description: Review or edit Verus code for maintainable specifications, proof boundaries, module layout, naming, trigger and broadcast discipline, ghost ownership, and version-aware vstd usage.
 ---
 
 # Verus Style
 
-Use this skill when the goal is not just to verify code, but to keep the proof development readable, repairable, and stable under solver changes.
+Keep proof interfaces clear and solver dependencies deliberate. Follow the repository's coding rules and pinned Verus version.
 
-## Module layout
+## Organize around proof boundaries
 
-Prefer an explicit split between:
+Separate mathematical models, reusable lemmas, and executable behavior where the repository does so.
+Small implementations can keep related spec, proof, and exec items together.
+Local proof blocks beside the operation they justify often improve readability.
 
-- abstract models and predicates
-- reusable proof lemmas
-- executable wrappers
+Use `View` or `DeepView` consistently with the existing model. Explain representation invariants independently of storage details.
+Do not assume `_t`, `_v`, or `_u` suffixes establish trust by themselves.
+For example, verified-storage and verified-nrkernel use different verified-file suffixes.
 
-Repository patterns to follow:
+Use descriptive lemma names. Match existing `spec_*`, `lemma_*`, `theorem_*`, and `wf` conventions instead of renaming unrelated code.
+Comments should explain the missing mathematical step, framing condition, or trust assumption.
 
-- `spec/`, `proof/`, `exec/` directories
-- `_t.rs` for trusted or interface-facing code
-- `_v.rs` for verified implementation and proof-heavy code
+## Keep contracts readable and complete
 
-If one file must contain all three layers, separate them by sections or trait blocks. Do not interleave spec, proof, and exec line by line.
+Group bounds, representation facts, and behavioral facts into separate clauses.
+Use named predicates for invariant clauses that appear across several transitions.
+State success and failure behavior to the extent required by callers.
+Do not describe a success-only implication as total equivalence.
 
-## Naming
+For mutable references, distinguish entry, final, and outstanding-borrow values using the syntax supported by the pinned toolchain.
+Do not mix old postcondition conventions with current `final` semantics.
 
-Use names that reveal proof role.
+Type invariants encapsulate validity of exec and tracked objects; arbitrary spec values do not inherit that validity.
+Use `use_type_invariant` when its fact is needed and permitted.
 
-- `spec_*` for mathematical helpers
-- `lemma_*` for reusable proof steps
-- `theorem_*` for roundtrip or inverse-direction facts
-- `wf` / `well_formed` for representation invariants
-- `*_trigger` only for synthetic trigger helpers
+## Expose only useful automation
 
-Name proof steps by the obligation they discharge, not by the syntax they use.
+Start with an existing lemma or explicit proof step. Make a lemma `broadcast` when repeated automatic instantiation helps callers.
+Group related broadcast lemmas behind a meaningful proof interface.
+Measure broad imports before narrowing them; local imports and explicit calls are useful controls, not universal style requirements.
 
-## Spec / proof / exec separation
+Keep `open` versus `closed` separate from opacity:
 
-Keep each layer doing one job.
+- Visibility controls what clients can depend on.
+- `#[verifier::opaque]`, `reveal`, and fuel control unfolding available to the solver.
+- `assert ... by` and helper contracts control how much proof context flows forward.
 
-- `spec fn`: define models and relations
-- `proof fn`: prove reusable facts
-- `exec fn`: implement behavior and call proof code at the boundary
+Inspect inferred triggers before adding annotations. Each alternative trigger group must cover all quantified variables.
+Distinguish alternative groups from a multi-term group; adding alternatives can increase instantiations.
+Avoid matching loops and synthetic triggers with no natural caller use.
 
-Preferred pattern:
+Use `compute_only`, `bit_vector`, and `nonlinear_arith` as local proof modes, not imports.
+Search the pinned `vstd` for lemma names and module paths. Resource APIs have moved between versions.
 
-```rust
-spec fn abs_model(...) -> ... { ... }
-proof fn lemma_model_step(...) ensures ... { ... }
-fn exec_impl(...) ensures result@ == abs_model(...) { ... }
-```
+## Make ownership and trust visible
 
-Do not let a `proof fn` become a second implementation of the algorithm.
+Use `Ghost<T>` for mathematical data and `Tracked<T>` for permissions or protocol resources.
+Show where tokens are acquired, transferred, and returned. Preserve their identities across updates.
+Keep invariant scopes small and reconstruct their complete payload before exit.
 
-## Invariant style
+Review `assume`, `admit`, `external_body`, `external`, and assumed specifications as proof boundaries.
+An existing trusted wrapper can be necessary; do not expand it to hide an unresolved obligation.
+Name the modeled hardware, external library, or environment behavior on which the contract relies.
 
-Loop invariants should contain both bounds and semantics.
+## Review and validation
 
-Type invariants should expose a stable abstract view.
+Check these points before finishing:
 
-Protocol invariants should be decomposed into small named predicates, usually by:
+1. The public contract captures the intended behavior and domain.
+1. The proof connects the implementation to that contract.
+1. Automation choices have clear use sites and acceptable verification cost.
+1. Ownership and trust boundaries are explicit.
+1. The repository's formatting, lint, tests, and full verification pass for the intended configuration.
 
-- domain completeness
-- ordering or range facts
-- ownership agreement
-- storage agreement
-- phase-specific facts for enum variants
-
-If an exec method depends on a type invariant, bring it back with `use_type_invariant`.
-
-## Broadcast facts
-
-Use `broadcast proof fn` for reusable algebraic or extensional facts, then `broadcast use` them locally.
-
-Prefer this:
-
-```rust
-broadcast proof fn encode_decode(...) ensures ...
-{
-    ...
-}
-
-proof fn theorem(...)
-{
-    broadcast use encode_decode;
-    ...
-}
-```
-
-Do not leave heavy broadcast imports wider than necessary.
-
-Prefer modern `broadcast proof fn` / `broadcast use` over old `broadcast_forall` style unless you are matching existing local code.
-
-## Trigger discipline
-
-Write explicit triggers in nontrivial quantified formulas.
-
-Good trigger shapes:
-
-- exact lookup terms like `s[i]`
-- `map.contains_key(k)`
-- paired domain-and-lookup triggers for maps
-- tiny synthetic helpers when the natural body has no stable trigger
-
-Common patterns:
-
-```rust
-forall |i: int| 0 <= i < s.len() ==> #[trigger] P(s[i])
-
-forall |k|
-    #![trigger m.dom().contains(k)]
-    #![trigger m.index(k)]
-    m.dom().contains(k) ==> ...
-```
-
-Avoid:
-
-- arithmetic-only triggers
-- triggers that omit quantified variables
-- giant trigger terms that almost never appear in proof code
-
-## Ghost ownership style
-
-Use `Ghost<T>` for erased non-linear facts.
-
-Use `Tracked<T>` for:
-
-- permissions
-- tokens
-- invariant payloads
-- linear ghost witnesses
-
-Keep ownership transfers inside the narrowest proof scope that performs them.
-
-When opening an invariant:
-
-- reconstruct the payload completely before exit
-- do not leak partially moved state across the boundary
-
-## Common `vstd` import patterns
-
-`vstd::prelude::*` is the default.
-
-Add narrow imports based on proof shape:
-
-- `seq`, `map`, `set`, `multiset` for abstract state proofs
-- `invariant`, `atomic_ghost`, `modes`, `cell` for concurrency or ghost ownership
-- `calc_macro` for structured rewrites
-- solver modes like `compute_only`, `bit_vector`, and `nonlinear_arith` deliberately and locally
-
-Use existing `vstd` lemmas and macros before writing custom low-level boilerplate.
-
-## Review checklist
-
-When editing or reviewing Verus code, ask:
-
-1. Is the abstraction split clear?
-1. Are names revealing proof role?
-1. Is the invariant decomposed into reusable parts?
-1. Are triggers explicit and syntactically useful?
-1. Is ghost ownership local and linear where it should be?
-1. Are heavy `vstd` imports and broadcast facts kept local?
-
-## Escalation rule
-
-If the task is specifically about concurrent protocols, `AtomicInvariant`, `atomic_with_ghost!`, tokenized state machines, or thread sharing patterns, switch to `verus-concurrency`.
+Read [maintenance evidence](references/maintenance.md) when choosing broadcast scope, reviewing trusted interfaces, or updating old syntax.

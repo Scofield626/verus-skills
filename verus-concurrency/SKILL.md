@@ -1,323 +1,190 @@
 ---
 name: verus-concurrency
-description: Design and repair concurrent Verus proofs. Use when working on tokenized_state_machine! protocols, ghost tokens, AtomicInvariant or LocalInvariant, atomic_with_ghost!, GhostVar or GhostVarAuth, deposit/withdraw/guard storage patterns, or Arc and thread::spawn verified sharing.
+description: Design and repair concurrent Verus proofs with VerusSync tokenized state machines, ghost tokens, invariants, atomic_with_ghost!, storage permissions, and verified threading.
 ---
 
 # Verus Concurrency
 
-Use this skill for concurrency, atomicity, and shared-state reasoning only.
+Use VerusSync as the default approach for shared-state protocols. Follow the repository's existing proof interfaces and pinned Verus version.
 
 ## Conceptual stack
 
 Read the proof as four layers:
 
-1. VerusSync state machine defines the protocol.
+1. A VerusSync state machine defines the protocol.
 1. Generated ghost tokens enforce ownership of protocol fragments.
-1. `AtomicInvariant` or `LocalInvariant` stores tokens and permissions at rest.
-1. `atomic_with_ghost!` or `open_atomic_invariant!` connects one concrete step to one ghost transition.
+1. `AtomicInvariant` or `LocalInvariant` stores tokens and permissions between operations.
+1. `atomic_with_ghost!` or `open_atomic_invariant!` connects a concrete step to the protocol.
 
-If the proof does not fit this stack yet, build the missing higher layer first. Do not start from raw atomics.
+Define the protocol before wiring its tokens into executable code.
+An existing proof around one atomic location may need only `atomic_with_ghost!`; preserve that simpler interface when it fits.
 
 ## VerusSync: define the protocol first
 
 ### Sharding choices
 
-Use `constant` for immutable global configuration or IDs.
+Sharding determines how a state-machine field is represented by owned tokens.
 
-Use `variable` for one authoritative current value.
+- Use `constant` for immutable configuration or IDs.
+- Use `variable` for one authoritative current value.
+- Use `map` for per-thread, per-request, per-page, or per-key ownership.
+- Use `storage_map` or `storage_option` for resources accessed through `guard`, `withdraw`, or `deposit`.
+- Use `set` for distinct elements and `multiset` when multiplicity matters.
 
-Use `map` for per-thread, per-request, per-page, or per-key ownership.
-
-Use `storage_map` or `storage_option` when the field stores an exec permission that must support `guard`, `withdraw`, or `deposit`.
-
-Use `multiset` or `set` for many interchangeable holders such as readers or pending requests.
+Preserve each token's instance identity as well as its value.
+For raw-pointer permissions, address equality alone does not establish allocation identity or provenance.
 
 ### Transition discipline
 
-Use `transition!` for ownership movement.
+Use `init!` to establish the initial state, `transition!` for state changes, and `property!` for safety facts or guards.
+Use `readonly!` for read-only observations supported by the pinned macro API.
 
-Use `property!` to derive a guard or safety fact from held tokens.
-
-Use `readonly!` only for genuine read-only protocol observations.
-
-Preferred skeleton:
+This complete state machine keeps a counter within a fixed limit:
 
 ```rust
+use verus_state_machines_macros::tokenized_state_machine;
+use vstd::prelude::*;
+
 tokenized_state_machine! {
-    Protocol {
+    Counter {
         fields {
-            #[sharding(constant)] cfg: Cfg;
-            #[sharding(variable)] phase: Phase;
-            #[sharding(map)] owners: Map<Key, OwnerState>;
-            #[sharding(storage_map)] store: Map<Key, Perm>;
+            #[sharding(constant)] pub limit: nat,
+            #[sharding(variable)] pub value: nat,
         }
 
-        transition!{
-            start(k: Key) {
-                ...
+        init! {
+            initialize(limit: nat) {
+                init limit = limit;
+                init value = 0;
             }
         }
 
-        property!{
-            borrow_perm(k: Key) {
-                have owners >= [k => let _];
-                guard store >= [k => let p];
+        transition! {
+            increment() {
+                require pre.value < pre.limit;
+                update value = pre.value + 1;
             }
         }
 
         #[invariant]
-        pub fn wf(&self) -> bool {
-            ...
+        pub fn bounded(&self) -> bool {
+            self.value <= self.limit
         }
+
+        #[inductive(initialize)]
+        fn initialize_inductive(post: Self, limit: nat) {}
+
+        #[inductive(increment)]
+        fn increment_inductive(pre: Self, post: Self) {}
     }
 }
 ```
 
 ### How to write the invariant
 
-Split the invariant into small clauses:
+Split the invariant into domain, range, phase, storage, and ownership conditions.
+Prove initialization and preservation for every transition.
 
-- domain completeness
-- ordering or range bounds
-- phase agreement
-- storage agreement
-- ownership-count agreement
+For quantified post-state facts, use `assert forall ... by` and split modified and unchanged entries.
+If the invariant is not inductive, add the missing protocol relation before tuning assertions or triggers.
 
-For nontrivial post-state repairs, use:
-
-```rust
-assert forall |k|
-    #[trigger] post.map.contains_key(k)
-    implies post.inv_for(k)
-by {
-    match post.map[k] {
-        ...
-    }
-}
-```
-
-This is the default repair for non-inductive concurrent invariants.
+For storage protocols and generated token APIs, read [ownership and storage](references/protocols.md#state-machine-storage-and-real-permissions).
 
 ## Auth-frag patterns
 
-Use auth-frag when one component can update a logical value and many others must observe or locally carry fragments of it.
+An authoritative resource records the shared state; fragments describe what individual holders may rely on.
 
-### Option A: state-machine auth/frag
+### State-machine auth/frag
 
-Use this when agreement is intrinsic to the protocol itself.
+Keep agreement in the protocol when it is part of the state-machine invariant:
 
-- authoritative value is a `variable` field
-- fragments are usually keyed `map` entries
-- updates are protocol transitions
+- Use a `variable` field for the authoritative value.
+- Use keyed `map` entries for fragments when ownership is per key.
+- Express permitted updates and agreement through transitions and invariants.
 
-### Option B: `Resource<...>` from `vstd::pcm`
+### Other resource types
 
-Use this when you need a reusable resource algebra independent of one protocol.
+Use an existing resource algebra when its split, join, and update rules fit the task.
+Check the pinned library: current APIs use `vstd::resource`, while older code may use `vstd::pcm`.
 
-- good for pure agreement or monotone resources
-- less direct for atomic protocol integration
-
-### Option C: `GhostVar` / `GhostVarAuth`
-
-Use this when you need one updater plus many agreeing readers or shards.
-
-This is the standard pattern for concurrent logical views stored in invariants.
-
-Template:
-
-```rust
-let tracked (mut auth, mut frag) = GhostVarAuth::<T>::new(v0);
-auth.agree(&frag);
-auth.update(&mut frag, v1);
-```
-
-Sharded update pattern:
-
-```rust
-open_atomic_invariant_in_proof!(credit => &inv => inner => {
-    let tracked mut shard = inner.shards.tracked_remove(shard_id);
-    auth_frag.agree(&shard.kv_state);
-    auth_frag.update(&mut shard.kv_state, new_shard_view);
-    completion = lin.apply(op, new_combined_view, result, &mut inner.combined);
-    inner.shards.tracked_insert(shard_id, shard);
-});
-```
+`GhostVarAuth<T>` and `GhostVar<T>` form one agreeing pair.
+`agree` requires matching IDs; `update` requires mutable access to both tokens.
+The pair does not provide arbitrary reader fragments.
+See [resource contracts and an example](references/protocols.md#resource-identity-and-update-authority).
 
 ## Connecting to exec code
 
 ### `atomic_with_ghost!`
 
-Use it when the atomic location itself carries the relevant ghost token.
+Use it when the atomic location carries the relevant ghost token.
+Keep proof work beside the atomic operation and preserve the relation between its value and the token.
 
-Template:
+For compare-and-exchange, handle success and failure separately.
+An atomic step may advance the protocol or preserve its abstract state; it need not perform exactly one abstract update.
 
-```rust
-let res = atomic_with_ghost!(
-    &self.atomic => compare_exchange(expected, desired);
-    update old_val -> new_val;
-    returning ret;
-    ghost g => {
-        if ret.is_ok() {
-            g = self.inst.borrow().transition(g, ...);
-        }
-    }
-);
-```
+Identify the linearization point: the logical instant when an operation takes effect.
+Linearizability needs a relation to the abstract history, beyond an inductive state invariant.
 
-Keep the block tiny. One atomic op, one ghost update.
+### `AtomicInvariant` and `LocalInvariant`
 
-### `AtomicInvariant`
+Store protected tokens and permissions in the invariant and restore its complete payload before closing it.
 
-Store inside it any ghost state that must persist between operations:
+`AtomicInvariant` supports sharing across threads when its payload meets the required bounds.
+Its ordinary open block permits at most one supported atomic executable operation, together with proof work.
+The standard invariant API uses sequentially consistent atomics; follow the pinned API's memory model.
 
-- atomic permissions
-- hidden `PointsTo<T>` permissions
-- state-machine tokens at rest
-- `GhostVarAuth<T>` plus matching fragments
-- one-shot or refcount halves
-
-Open it only around the atomic action or the short proof step that needs it.
+`LocalInvariant` has no atomic-operation restriction but is not `Sync`.
+It cannot provide cross-thread sharing through a shared reference.
 
 ### `open_atomic_invariant!` discipline
 
-Inside the block:
-
-- perform only atomic exec code
-- do proof-only ghost rearrangement
-- rebuild the full payload before exit
-
-Do not:
-
-- re-open the same invariant recursively
-- call helpers that open arbitrary invariants unless masks allow it
-- put loops or unrelated exec code inside the block
+- Check namespace masks before opening invariants or calling helpers.
+- Do not reopen the same invariant while it is open.
+- Keep loops and unrelated executable code outside the block.
+- Restore the predicate and all payload fields on every branch.
+- Supply an `OpenInvariantCredit` for proof-mode opening; do not manufacture credits in proof code.
 
 ### `deposit` / `withdraw` / `guard`
 
-Use `guard` when read-only stability is enough.
+Use `guard` for shared access justified by held tokens.
+Use `withdraw` to take ownership from storage and `deposit` to return a resource.
 
-Use `withdraw` when a thread needs exclusive ownership of the exec resource.
-
-Use `deposit` when returning ownership to shared storage.
-
-Patterns:
-
-```rust
-property!{
-    do_guard(v: (int, PointsTo<T>)) {
-        have shared_guard >= {v};
-        guard storage >= Some(v.1);
-    }
-}
-
-transition!{
-    writer_take() {
-        withdraw storage -= Some(let p);
-    }
-}
-
-transition!{
-    writer_put_back(p: PointsTo<T>) {
-        deposit storage += Some(p);
-    }
-}
-```
-
-For `storage_map`, prove domain and value agreement explicitly in the `by { ... }` block.
+For `storage_map`, prove that withdrawn keys exist and values match.
+Prove freshness for deposits and preserve agreement for unchanged entries.
+Use a `by { ... }` clause when the transition's safety condition needs an explicit proof.
 
 ## Threading
 
-Put shareable exec state in `Arc`.
+Put shareable executable state in `Arc`. Keep tracked thread capabilities separate.
+Use the repository's verified spawn and join wrappers when the proof crosses thread boundaries.
 
-Keep linear thread capabilities separate.
-
-Typical split:
-
-- `Arc<...>` for shared object
-- one tracked token per thread or closure
-- join returns an upgraded tracked witness
-
-Patterns:
-
-```rust
-let shared = Arc::new(SharedState { ... });
-let shared2 = shared.clone();
-let handle = vstd::thread::spawn(
-    move || -> (ret: Tracked<Witness>)
-        ensures ret@@ is Complete,
-    {
-        thread_routine(shared2, Tracked(my_token), Ghost(thread_id))
-    }
-);
-let done = handle.join().unwrap();
-```
-
-Node-replication style:
-
-```rust
-let nr = Arc::new(NodeReplicated::new(...));
-std::thread::spawn(move || {
-    let mut tkn = tkn;
-    match nr.execute_mut(op, tkn, Tracked::assume_new()) {
-        Ok((_, new_tkn, _)) | Err((new_tkn, _)) => { tkn = new_tkn; }
-    }
-});
-```
+Move each thread's token into its closure and return the completion evidence required by the caller.
+Preserve produced tokens on success, retry, and error paths.
+Do not create missing capabilities with `Tracked::assume_new()`.
 
 ## Concurrent proof repair
 
-Classify the failure by layer.
+Classify the failure by layer:
 
-### Non-inductive invariant
+| Failure | Repair |
+| --- | --- |
+| Non-inductive invariant | Find the missing relation; prove entry and preservation |
+| Missing token | Store produced tokens immediately; track each branch's ownership |
+| Namespace conflict | Check masks, shorten open scopes, and use distinct namespaces when required |
+| Atomic block violation | Move non-atomic executable work outside the block |
+| Storage mismatch | Prove key, value, and instance agreement; check deposit freshness |
+| Trigger miss | Inspect inferred triggers; expose the relevant membership or lookup instance |
 
-Repair with:
+Use `opens_invariants none` only when the helper's body satisfies that restriction.
+Run focused verification, then the repository's full verification, lint, and relevant tests.
+Safety or linearizability alone does not establish termination, fairness, lock freedom, or liveness.
 
-- smaller invariant clauses
-- explicit `assert forall ... by`
-- local trigger-forcing asserts
+## Optional: logically atomic APIs
 
-### Missing token
-
-Repair with:
-
-- `Option<Tracked<_>>` storage across success branches
-- immediate save of produced tokens
-- explicit unwrap only after success is known
-
-### Namespace conflict
-
-Repair with:
-
-- distinct namespaces
-- shorter open scopes
-- helpers marked `opens_invariants none`
-
-### Atomic block violation
-
-Repair with:
-
-- move non-atomic exec code outside
-- leave only the atomic instruction and ghost update inside
-
-### `storage_map` mismatch
-
-Repair with:
-
-- explicit proof that every withdrawn key exists
-- explicit proof that every withdrawn value matches pre-state
-- explicit freshness or admissibility proof for deposits
-
-### Trigger miss inside an invariant proof
-
-Repair by asserting the precise membership or lookup term first.
-
-Typical pattern:
-
-```rust
-assert(inner.shards.contains_key(self.shard));
-assert(shard_of_key(key, self.inv.constant().nshard()) == self.shard);
-```
+Keep an existing linearization interface when the repository provides one.
+For a task that needs compositional logically atomic contracts, read [the experimental API guidance](references/protocols.md#logically-atomic-apis-current-and-experimental).
+Check version support before using `atomically` specifications.
 
 ## Escalation rule
 
-If the task is ordinary sequential proof construction or repair without shared-state protocol machinery, switch to `verus-proof-writing` or `verus-proof-repair`.
+For sequential proofs without shared-state protocol machinery, use `verus-proof-writing` or `verus-proof-repair` if available.
