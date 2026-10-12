@@ -1,6 +1,6 @@
 # Ownership and logical atomicity
 
-Reviewed 2026-10-12. The APIs here follow current Verus sources; older project pins can use different module paths and contracts.
+Check the repository's Verus version before using these APIs; module paths and contracts can differ.
 
 ## Resource identity and update authority
 

@@ -1,6 +1,5 @@
 # Current language patterns
 
-Reviewed 2026-10-12 against Verus source revision `4bfc2b4484efc35ed373372a35f69b45f2483ea5`.
 Check the target repository's version before applying these patterns.
 The examples below are complete items to place inside `verus!` with `vstd::prelude::*` imported.
 

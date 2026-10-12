@@ -1,6 +1,6 @@
 # Maintenance evidence and review rules
 
-Reviewed 2026-10-12. These sources support decisions about proof maintenance; they do not impose one universal project layout.
+These sources support decisions about proof maintenance; they do not impose one universal project layout.
 
 ## Treat automation as a configurable proof interface
 

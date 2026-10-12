@@ -1,7 +1,7 @@
-# Proof patterns from reviewed projects
+# Project proof patterns
 
-Reviewed 2026-10-12. These are practical deductions from the linked code, not requirements imposed by Verus.
-Links pin the inspected revisions. A project's current branch can differ substantially from its published artifact.
+These are practical deductions from the linked code, not requirements imposed by Verus.
+Source links pin revisions, which can differ from the published artifacts.
 
 ## Compose a model proof with an implementation proof
 
@@ -65,7 +65,7 @@ Keep implementation invariants separate from the externally visible specificatio
 CortenMM's [node model helpers](https://github.com/TELOS-syslab/CortenMM-Artifact/blob/604592d815cb1cb7d4619f202b5d7ff471a3a7af/verification/common/src/spec/node_helper.rs)
 provide another useful decomposition: conversion and inverse lemmas between node identifiers, tree traces, and levels.
 Prove these representation bridges once before using them throughout traversal proofs.
-This is an inspected artifact pattern, not a claim that every memory-management operation is verified.
+Use this as a decomposition example; some helpers contain `admit()`.
 
 ## Keep liveness separate from step correctness
 

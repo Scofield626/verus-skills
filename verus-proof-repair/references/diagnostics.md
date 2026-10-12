@@ -1,7 +1,7 @@
 # Diagnostics and proof stability
 
-Reviewed 2026-10-12. Use the target repository's pinned verifier and build command.
-The options below are supported by the inspected current Verus sources; check `verus --help` for older pins.
+Use the target repository's pinned verifier and build command.
+Check `verus --help` for the options available in that version.
 
 For regressions after an upgrade, check the
 [mutable-reference migration](https://github.com/verus-lang/verus/blob/4bfc2b4484efc35ed373372a35f69b45f2483ea5/source/docs/migration-mut-ref.md) and
